@@ -6,6 +6,10 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const port = process.env.PORT || 3000;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+// Staging-vs-production is a DATA switch only: it gates the boot-time demo
+// seed and nothing else. Every screen, endpoint and code path is identical
+// in both environments.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // The platform signs user-identity tokens with an RSA private key it never
 // shares. Containers get only the PUBLIC half, so this app can verify who a
@@ -100,7 +104,15 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+// Graceful shutdown state, declared before the routes that read it.
+const DRAIN_MS = 3000;
+let shuttingDown = false;
+let server = null;
+
+app.get('/health', (_req, res) => {
+  if (shuttingDown) return res.status(503).json({ status: 'draining' });
+  res.json({ status: 'ok' });
+});
 
 // The template ships no favicon file; index.html carries an inline SVG
 // icon instead. Answer 204 here so anything that still probes
@@ -109,29 +121,92 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-// Button press
-app.post('/api/press', async (req, res) => {
+// ---- Jobs API ----
+
+// List jobs. Optional `q` (searches title, company and description) and
+// `tag` (exact match on one tag). The response also carries every distinct
+// tag in the board so the frontend can render the filter chips in one
+// request.
+app.get('/api/jobs', async (req, res) => {
   try {
-    await pool.query(`
-      INSERT INTO presses (user_id, username) VALUES ($1, $2)
-    `, [req.user.id, req.user.username]);
-    res.json({ ok: true });
+    const q = (req.query.q || '').toString().trim();
+    const tag = (req.query.tag || '').toString().trim();
+    // Escape the user's % and _ so a search for "50%" doesn't become a
+    // wildcard pattern of its own.
+    const like = '%' + q.replace(/([%_\\])/g, '\\$1') + '%';
+    const { rows } = await pool.query(`
+      SELECT id, title, company, tags, created_at
+      FROM jobs
+      WHERE (title ILIKE $1 OR company ILIKE $1 OR description ILIKE $1)
+        AND ($2 = '' OR $2 = ANY(tags))
+      ORDER BY created_at DESC, id DESC
+      LIMIT 100
+    `, [like, tag]);
+    const { rows: tagRows } = await pool.query(`
+      SELECT DISTINCT t AS tag
+      FROM (SELECT unnest(tags) AS t FROM jobs) AS all_tags
+      ORDER BY tag
+    `);
+    res.json({ jobs: rows, tags: tagRows.map((r) => r.tag) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Leaderboard
-app.get('/api/leaderboard', async (_req, res) => {
+// One job, for the detail view.
+app.get('/api/jobs/:id', async (req, res) => {
   try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'Invalid job id' });
+    }
+    const { rows } = await pool.query('SELECT * FROM jobs WHERE id = $1', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Job not found' });
+    res.json({ job: rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Post a job. Validation lives here so the API contract holds no matter
+// which client talks to it; the form mirrors the same rules for instant
+// feedback.
+function parseTags(raw) {
+  const list = (Array.isArray(raw) ? raw.join(',') : String(raw || ''))
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .filter((t) => t.length <= 30)
+    .slice(0, 8);
+  return [...new Set(list)];
+}
+
+app.post('/api/jobs', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const title = String(body.title || '').trim();
+    const company = String(body.company || '').trim();
+    const description = String(body.description || '').trim();
+    const contact = String(body.contact || '').trim();
+    const tags = parseTags(body.tags);
+
+    const errors = [];
+    if (title.length < 3) errors.push('Title must be at least 3 characters');
+    if (title.length > 200) errors.push('Title must be 200 characters or fewer');
+    if (!company) errors.push('Company is required');
+    if (company.length > 200) errors.push('Company must be 200 characters or fewer');
+    if (!description) errors.push('Description is required');
+    if (description.length > 5000) errors.push('Description must be 5000 characters or fewer');
+    if (!contact) errors.push('Contact is required');
+    if (contact.length > 500) errors.push('Contact must be 500 characters or fewer');
+    if (errors.length) return res.status(400).json({ error: errors[0], details: errors });
+
     const { rows } = await pool.query(`
-      SELECT username, COUNT(*) as presses
-      FROM presses
-      GROUP BY username
-      ORDER BY presses DESC
-      LIMIT 50
-    `);
-    res.json({ leaderboard: rows });
+      INSERT INTO jobs (user_id, username, title, company, description, contact, tags)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id, title, company, tags, created_at
+    `, [req.user.id, req.user.username, title, company, description, contact, tags]);
+    res.status(201).json({ job: rows[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -176,16 +251,96 @@ app.get('*', (req, res) => {
 
 async function start() {
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS presses (
+    CREATE TABLE IF NOT EXISTS jobs (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL,
       username VARCHAR(255) NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      title VARCHAR(200) NOT NULL,
+      company VARCHAR(200) NOT NULL,
+      description TEXT NOT NULL,
+      contact VARCHAR(500) NOT NULL,
+      tags TEXT[] NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
-  const server = app.listen(port, () => console.log(`Listening on :${port}`));
+  await pool.query(
+    'CREATE INDEX IF NOT EXISTS jobs_created_at_idx ON jobs (created_at DESC)'
+  );
+
+  // Staging previews start with an empty `jobs` table (it is new), so seed
+  // a handful of obviously fake rows for the board, search, tag filter and
+  // detail views to show. Fake identities only; strictly a no-op in
+  // production.
+  if (IS_STAGING) {
+    const seedJobs = [
+      {
+        id: 900001,
+        title: 'Staging demo: Frontend developer',
+        company: 'Staging demo studio',
+        description: 'Staging demo job. Build and polish web interfaces for a small product team. Two years of experience with modern JavaScript is plenty; bring your portfolio.',
+        contact: 'jobs@stagingdemo.example',
+        tags: ['Full-time', 'Remote'],
+      },
+      {
+        id: 900002,
+        title: 'Staging demo: Social media intern',
+        company: 'Staging demo agency',
+        description: 'Staging demo job. Schedule posts, draft captions and help with a monthly campaign report. Great first role for a student.',
+        contact: 'https://stagingdemo.example/apply',
+        tags: ['Part-time', 'Remote'],
+      },
+      {
+        id: 900003,
+        title: 'Staging demo: Delivery driver',
+        company: 'Staging demo logistics',
+        description: 'Staging demo job. Morning shifts, own scooter preferred, fuel allowance included. Immediate start.',
+        contact: '+62 812 0000 0000',
+        tags: ['Full-time', 'On-site'],
+      },
+      {
+        id: 900004,
+        title: 'Staging demo: Copywriter (freelance)',
+        company: 'Staging demo print shop',
+        description: 'Staging demo job. Short product copy for a seasonal catalogue, about 40 items. Per-project rate, paid weekly.',
+        contact: 'hello@stagingdemo.example',
+        tags: ['Freelance'],
+      },
+    ];
+    for (const job of seedJobs) {
+      await pool.query(`
+        INSERT INTO jobs (id, user_id, username, title, company, description, contact, tags)
+        VALUES ($1, 0, 'staging-demo-user', $2, $3, $4, $5, $6)
+        ON CONFLICT (id) DO NOTHING
+      `, [job.id, job.title, job.company, job.description, job.contact, job.tags]);
+    }
+  }
+
+  server = app.listen(port, () => console.log(`Listening on :${port}`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
 }
+
+// The container is stopped and replaced on every deploy. Stop accepting
+// connections, let in-flight requests finish under a hard deadline, close
+// the pool, exit. Idempotent: a repeat SIGTERM/SIGINT during the drain is
+// a no-op.
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received, draining`);
+  server.close(() => {});
+  server.closeIdleConnections?.();
+  const t = setTimeout(() => server.closeAllConnections?.(), DRAIN_MS);
+  t.unref?.();
+  try {
+    await pool.end();
+  } catch (e) {
+    console.error('[shutdown] pool.end failed', e.message);
+  }
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 start().catch(err => { console.error(err); process.exit(1); });

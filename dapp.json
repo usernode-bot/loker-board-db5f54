@@ -1,4 +1,29 @@
 {
   "description": "Job and gig board with filter, search, and contact links.",
-  "secrets": []
+  "secrets": [],
+  "tests": [
+    {
+      "id": "board.list",
+      "name": "Job list renders seeded demo jobs",
+      "path": "/",
+      "expectSelector": "#job-list .job-card",
+      "visual": true,
+      "impact": ["public/**", "server.js", "dapp.json"]
+    },
+    {
+      "name": "Search filters the job list",
+      "path": "/?q=intern",
+      "expectText": "Staging demo: Social media intern"
+    },
+    {
+      "name": "Job detail shows description and contact",
+      "path": "/job/900001",
+      "expectText": "jobs@stagingdemo.example"
+    },
+    {
+      "name": "Post job form renders",
+      "path": "/post",
+      "expectText": "Post a job"
+    }
+  ]
 }
