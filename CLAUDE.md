@@ -88,13 +88,26 @@ tables you've marked private), etc.
 
 ## About Loker Board
 
-Job and gig board with filter, search, and contact links.
-
-_(add a sentence or two more of product context here so Claude Code has a
-shared understanding of what this app is for)_
+Job and gig board with filter, search, and contact links. Anyone signed
+in through the platform can browse jobs, search by keyword, filter by
+tag, and post a job with a contact link (email, phone or URL — the
+frontend turns whatever they typed into a tappable link). "Loker" is
+Indonesian for a job vacancy.
 
 ## App-specific conventions
 
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_
+- One table, `jobs`, public by default (job posts are public content).
+  Tags are a Postgres `TEXT[]`; the form takes them comma-separated,
+  max 8 tags of 30 characters each.
+- Validation contract for posting: title at least 3 characters,
+  company, contact and description required. The server enforces it
+  (`POST /api/jobs` returns 400 with `{ error, details }`); the form
+  mirrors the same rules for instant feedback.
+- The frontend (`public/app.js`) is a single vanilla-JS page with a
+  client-side router over real paths (`/`, `/post`, `/job/<id>`).
+  Keep intercepting internal links: a full page load drops the iframe
+  token, and only the first load carries one.
+- List filters live in the URL (`/?q=...&tag=...`); when rewriting the
+  URL, preserve the platform's own params (`token`, `un-theme`).
+- The `presses` table from the starter template is no longer used by
+  any code; it was left in existing databases rather than dropped.
