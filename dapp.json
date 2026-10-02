@@ -8,7 +8,11 @@
       "path": "/",
       "expectSelector": "#job-list .job-card",
       "visual": true,
-      "impact": ["public/**", "server.js", "dapp.json"]
+      "impact": [
+        "public/**",
+        "server.js",
+        "dapp.json"
+      ]
     },
     {
       "name": "Search filters the job list",
@@ -25,5 +29,6 @@
       "path": "/post",
       "expectText": "Post a job"
     }
-  ]
+  ],
+  "name": "Job Board"
 }
