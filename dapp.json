@@ -30,5 +30,6 @@
       "expectText": "Post a job"
     }
   ],
-  "name": "Job Board"
+  "name": "Job Board",
+  "icon": { "emoji": "💼" }
 }
