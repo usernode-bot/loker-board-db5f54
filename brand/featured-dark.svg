@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+  <rect width="1200" height="800" fill="#000000"/>
+  <!-- left notice: green, no outline on black -->
+  <rect x="24" y="260" width="280" height="280" rx="40" fill="#A9CF97"/>
+  <rect x="64" y="360" width="176" height="22" rx="11" fill="#000000"/>
+  <rect x="64" y="404" width="176" height="22" rx="11" fill="#000000"/>
+  <rect x="64" y="448" width="110" height="22" rx="11" fill="#000000"/>
+  <circle cx="164" cy="260" r="28" fill="#FFFEEA" stroke="#000000" stroke-width="8"/>
+  <!-- right notice: blue -->
+  <rect x="896" y="260" width="280" height="280" rx="40" fill="#3090E1"/>
+  <rect x="936" y="360" width="176" height="22" rx="11" fill="#000000"/>
+  <rect x="936" y="404" width="176" height="22" rx="11" fill="#000000"/>
+  <rect x="936" y="448" width="110" height="22" rx="11" fill="#000000"/>
+  <circle cx="1036" cy="260" r="28" fill="#FFFEEA" stroke="#000000" stroke-width="8"/>
+  <!-- centre: the app-icon mark (notice, briefcase, pin), no tile, scaled 0.85 and centred -->
+  <g transform="translate(600,400) scale(0.85) translate(-512,-498)">
+    <rect x="192" y="232" width="640" height="600" rx="56" fill="#FFEE6F"/>
+    <path d="M432 448V400a32 32 0 0 1 32-32h96a32 32 0 0 1 32 32v48" fill="none" stroke="#000000" stroke-width="40"/>
+    <rect x="312" y="444" width="400" height="290" rx="44" fill="#000000"/>
+    <rect x="312" y="556" width="400" height="20" fill="#FFEE6F"/>
+    <circle cx="512" cy="232" r="60" fill="#FFFEEA" stroke="#000000" stroke-width="16"/>
+  </g>
+</svg>
